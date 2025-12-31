@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Image Extractor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .gallery-item:hover .overlay {
+            opacity: 1;
+        }
+        .loader {
+            border-top-color: #3498db;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-2 text-blue-400">Universal Image Extractor</h1>
+            <p class="text-gray-400 max-w-2xl mx-auto text-lg">
+                A simple tool to instantly extract, upscale, and preview images from provided links or source code.
+            </p>
+        </header>
+
+        <div class="max-w-4xl mx-auto mb-12">
+            <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700">
+                <div class="space-y-4">
+                    <textarea 
+                        id="manualHtml" 
+                        placeholder="Paste image links or page source code here..." 
+                        class="w-full h-48 bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-500 font-mono"
+                    ></textarea>
+                    <div class="flex gap-4">
+                        <button 
+                            onclick="extractFromManual()" 
+                            class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-lg transition-all text-lg shadow-lg shadow-blue-900/20"
+                        >
+                            Process Content
+                        </button>
+                        <button 
+                            onclick="clearInput()" 
+                            class="px-6 bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold rounded-lg transition-all border border-gray-600"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="statusMessage" class="mb-8 text-sm hidden p-4 rounded-lg bg-gray-900/80 border border-gray-700/50 shadow-inner"></div>
+
+        <div id="toolbar" class="hidden mb-6 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gray-800/40 p-4 rounded-lg border border-gray-700/30">
+            <h2 id="countLabel" class="text-lg font-medium text-gray-300"></h2>
+            <div class="flex gap-3">
+                <button 
+                    onclick="copyAllUrls()"
+                    class="text-sm bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 border border-gray-600 font-medium"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                    Copy All URLs
+                </button>
+            </div>
+        </div>
+
+        <div id="gallery" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6"></div>
+
+        <div id="emptyState" class="text-center py-24">
+            <div class="bg-gray-800/50 inline-block p-10 rounded-full mb-6 border border-gray-700/30 text-gray-700">
+                <svg class="h-20 w-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                </svg>
+            </div>
+            <p class="text-gray-500 text-xl font-light italic">Paste image addresses or source code above.</p>
+        </div>
+    </div>
+
+    <script>
+        let currentExtractedUrls = [];
+
+        function clearInput() {
+            document.getElementById('manualHtml').value = '';
+            resetUI();
+            document.getElementById('emptyState').classList.remove('hidden');
+        }
+
+        function extractFromManual() {
+            const content = document.getElementById('manualHtml').value;
+            if (!content || content.trim() === "") {
+                showStatus("Please paste some content first.", "text-red-400");
+                return;
+            }
+            processContent(content);
+        }
+
+        function processContent(input) {
+            resetUI();
+            const imageSet = new Set();
+            
+            // 1. Try DOM parsing if it looks like HTML
+            if (input.includes('<')) {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(input, 'text/html');
+                doc.querySelectorAll('[data-url], [data-src], .bbImage img, img').forEach(el => {
+                    const url = el.getAttribute('data-url') || el.getAttribute('src');
+                    if (url) imageSet.add(upscaleUrl(resolveUrl(url)));
+                });
+            }
+
+            // 2. Greedy Regex Scan (Essential for mixed text or raw URL lists)
+            const regex = /(https?:\/\/[^"'\s]+\.(?:jpg|jpeg|png|webp|gif|avif)[^"'\s]*)/gi;
+            let match;
+            while ((match = regex.exec(input)) !== null) {
+                const url = match[0].replace(/\\/g, '');
+                if (!url.includes('logo') && !url.includes('avatar') && !url.includes('icon')) {
+                    imageSet.add(upscaleUrl(resolveUrl(url)));
+                }
+            }
+
+            const finalImages = Array.from(imageSet).filter(url => {
+                const low = url.toLowerCase();
+                return url && (low.includes('selti-delivery.ru') || low.includes('jpg6.su') || isDirectImage(url));
+            });
+
+            currentExtractedUrls = finalImages;
+            renderGallery(finalImages);
+        }
+
+        function upscaleUrl(url) {
+            if (url.includes('selti-delivery.ru')) {
+                return url.replace(/\.(md|th)\.(jpg|jpeg|png|webp)$/i, '.$2');
+            }
+            return url;
+        }
+
+        function isDirectImage(url) {
+            return /\.(jpg|jpeg|png|gif|webp|svg|avif)$/i.test(url.split(/[?#]/)[0]);
+        }
+
+        function resolveUrl(url) {
+            if (!url) return "";
+            url = url.trim().replace(/\\/g, ''); 
+            if (url.startsWith('//')) return 'https:' + url;
+            return url;
+        }
+
+        function resetUI() {
+            document.getElementById('gallery').innerHTML = '';
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('statusMessage').classList.add('hidden');
+            document.getElementById('toolbar').classList.add('hidden');
+        }
+
+        function showStatus(msg, colorClass) {
+            const status = document.getElementById('statusMessage');
+            status.innerHTML = msg;
+            status.className = `mb-8 text-sm ${colorClass} p-4 rounded-lg bg-gray-900/80 block border border-gray-700/50 shadow-inner`;
+            status.classList.remove('hidden');
+        }
+
+        function renderGallery(images) {
+            const gallery = document.getElementById('gallery');
+            const toolbar = document.getElementById('toolbar');
+            const countLabel = document.getElementById('countLabel');
+
+            if (images.length === 0) {
+                document.getElementById('emptyState').classList.remove('hidden');
+                showStatus("No valid images detected. Make sure you are pasting direct image addresses or the page source.", "text-yellow-500");
+                return;
+            }
+
+            toolbar.classList.remove('hidden');
+            countLabel.textContent = `Extracted ${images.length} High-Resolution Images`;
+
+            images.forEach((imgUrl, index) => {
+                const item = document.createElement('div');
+                item.className = "gallery-item relative bg-gray-800 rounded-xl overflow-hidden shadow-2xl border border-gray-700 transition-all hover:scale-[1.03] hover:ring-4 hover:ring-blue-500/30 group";
+                
+                item.innerHTML = `
+                    <div class="aspect-square bg-gray-950 flex items-center justify-center overflow-hidden">
+                        <img 
+                            src="${imgUrl}" 
+                            class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                            loading="lazy"
+                            referrerpolicy="no-referrer"
+                            onerror="handleImageError(this)"
+                        >
+                    </div>
+                    <div class="overlay opacity-0 absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3 transition-opacity duration-300 backdrop-blur-[2px]">
+                        <div class="flex gap-3">
+                            <a href="${imgUrl}" target="_blank" class="bg-blue-600 p-3 rounded-full hover:bg-blue-500 transition-all shadow-lg" title="Open Image">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                            </a>
+                            <button onclick="downloadImage('${imgUrl}', 'image_${index}')" class="bg-green-600 p-3 rounded-full hover:bg-green-500 transition-all shadow-lg" title="Download Image">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            </button>
+                            <button onclick="copyToClipboard('${imgUrl}')" class="bg-gray-700 p-3 rounded-full hover:bg-gray-600 transition-all shadow-lg" title="Copy URL">
+                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                gallery.appendChild(item);
+            });
+            
+            showStatus(`Processing complete. Displayed ${images.length} items.`, "text-green-400");
+        }
+
+        async function downloadImage(url, filename) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename + url.substring(url.lastIndexOf('.'));
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (e) {
+                // Fallback if fetch is blocked by CORS
+                window.open(url, '_blank');
+            }
+        }
+
+        function handleImageError(img) {
+            const container = img.closest('.gallery-item');
+            if (container) container.remove();
+            const currentCount = document.querySelectorAll('.gallery-item').length;
+            document.getElementById('countLabel').textContent = `Extracted ${currentCount} High-Resolution Images`;
+        }
+
+        function copyToClipboard(text) {
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            
+            const btn = event.currentTarget;
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+            setTimeout(() => btn.innerHTML = originalHTML, 1500);
+        }
+
+        function copyAllUrls() {
+            const urls = Array.from(document.querySelectorAll('.gallery-item img')).map(img => img.src);
+            if (urls.length === 0) return;
+            const text = urls.join('\n');
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'All URLs Copied!';
+            setTimeout(() => btn.innerHTML = originalText, 2000);
+        }
+    </script>
+</body>
+</html>
