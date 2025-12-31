@@ -71,7 +71,16 @@
         <div id="statusMessage" class="mb-8 text-sm hidden p-4 rounded-lg bg-gray-900/80 border border-gray-700/50 shadow-inner"></div>
 
         <div id="toolbar" class="hidden mb-6 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gray-800/40 p-4 rounded-lg border border-gray-700/30">
-            <h2 id="countLabel" class="text-lg font-medium text-gray-300"></h2>
+            <div class="flex flex-col">
+                <h2 id="countLabel" class="text-lg font-medium text-gray-300"></h2>
+                <div id="sortContainer" class="mt-2 flex items-center gap-2">
+                    <label for="sortOrder" class="text-xs text-gray-400">Sort by:</label>
+                    <select id="sortOrder" onchange="reSortGallery()" class="bg-gray-700 text-xs border border-gray-600 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="original">Original Order</option>
+                        <option value="resolution">Resolution (High to Low)</option>
+                    </select>
+                </div>
+            </div>
             <div class="flex gap-3">
                 <button 
                     onclick="copyAllUrls()"
@@ -96,7 +105,7 @@
     </div>
 
     <script>
-        let currentExtractedUrls = [];
+        let currentImagesData = [];
 
         function clearInput() {
             document.getElementById('manualHtml').value = '';
@@ -113,7 +122,7 @@
             processContent(content);
         }
 
-        function processContent(input) {
+        async function processContent(input) {
             resetUI();
             const imageSet = new Set();
             
@@ -130,7 +139,7 @@
                 });
             }
 
-            // 2. Greedy Regex Scan (Essential for mixed text or raw URL lists)
+            // 2. Greedy Regex Scan
             const regex = /(https?:\/\/[^"'\s]+\.(?:jpg|jpeg|png|webp|gif|avif|svg)[^"'\s]*)/gi;
             let match;
             while ((match = regex.exec(input)) !== null) {
@@ -141,13 +150,51 @@
                 }
             }
 
-            const finalImages = Array.from(imageSet).filter(url => isDirectImage(url));
+            const urls = Array.from(imageSet).filter(url => isDirectImage(url));
+            
+            showStatus("Measuring image resolutions...", "text-blue-400");
+            
+            // Load and measure images
+            currentImagesData = await Promise.all(urls.map(url => getImageMetadata(url)));
+            
+            // Filter out images that failed to load completely
+            currentImagesData = currentImagesData.filter(img => img.width > 0);
 
-            currentExtractedUrls = finalImages;
-            renderGallery(finalImages);
+            reSortGallery();
         }
 
-        // Helper to filter out common UI noise
+        function getImageMetadata(url) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    resolve({
+                        url: url,
+                        width: img.naturalWidth,
+                        height: img.naturalHeight,
+                        area: img.naturalWidth * img.naturalHeight,
+                        originalIndex: currentImagesData.length
+                    });
+                };
+                img.onerror = () => {
+                    resolve({ url: url, width: 0, height: 0, area: 0, originalIndex: 0 });
+                };
+                img.src = url;
+            });
+        }
+
+        function reSortGallery() {
+            const sortVal = document.getElementById('sortOrder').value;
+            let sorted = [...currentImagesData];
+
+            if (sortVal === 'resolution') {
+                sorted.sort((a, b) => b.area - a.area);
+            } else {
+                sorted.sort((a, b) => a.originalIndex - b.originalIndex);
+            }
+
+            renderGallery(sorted);
+        }
+
         function isNoise(url) {
             const low = url.toLowerCase();
             return low.includes('logo') || 
@@ -166,7 +213,6 @@
             if (!url) return "";
             url = url.trim().replace(/\\/g, ''); 
             if (url.startsWith('//')) return 'https:' + url;
-            // Check if it's a valid URL
             try {
                 new URL(url);
                 return url;
@@ -189,43 +235,48 @@
             status.classList.remove('hidden');
         }
 
-        function renderGallery(images) {
+        function renderGallery(imageDataArray) {
             const gallery = document.getElementById('gallery');
             const toolbar = document.getElementById('toolbar');
             const countLabel = document.getElementById('countLabel');
 
-            if (images.length === 0) {
+            gallery.innerHTML = '';
+
+            if (imageDataArray.length === 0) {
                 document.getElementById('emptyState').classList.remove('hidden');
-                showStatus("No valid images detected. Ensure the source contains image links (jpg, png, etc.) or page code.", "text-yellow-500");
+                showStatus("No valid images detected.", "text-yellow-500");
                 return;
             }
 
             toolbar.classList.remove('hidden');
-            countLabel.textContent = `Extracted ${images.length} Images`;
+            countLabel.textContent = `Extracted ${imageDataArray.length} Images`;
 
-            images.forEach((imgUrl, index) => {
+            imageDataArray.forEach((img, index) => {
                 const item = document.createElement('div');
                 item.className = "gallery-item relative bg-gray-800 rounded-xl overflow-hidden shadow-2xl border border-gray-700 transition-all hover:scale-[1.03] hover:ring-4 hover:ring-blue-500/30 group";
                 
                 item.innerHTML = `
                     <div class="aspect-square bg-gray-950 flex items-center justify-center overflow-hidden">
                         <img 
-                            src="${imgUrl}" 
+                            src="${img.url}" 
                             class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                             loading="lazy"
                             referrerpolicy="no-referrer"
-                            onerror="handleImageError(this)"
                         >
+                    </div>
+                    <!-- Resolution Badge -->
+                    <div class="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-[10px] px-2 py-1 rounded text-gray-300 font-mono">
+                        ${img.width} x ${img.height}
                     </div>
                     <div class="overlay opacity-0 absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3 transition-opacity duration-300 backdrop-blur-[2px]">
                         <div class="flex gap-3">
-                            <a href="${imgUrl}" target="_blank" class="bg-blue-600 p-3 rounded-full hover:bg-blue-500 transition-all shadow-lg" title="Open Image">
+                            <a href="${img.url}" target="_blank" class="bg-blue-600 p-3 rounded-full hover:bg-blue-500 transition-all shadow-lg" title="Open Image">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                             </a>
-                            <button onclick="downloadImage('${imgUrl}', 'extracted_image_${index}')" class="bg-green-600 p-3 rounded-full hover:bg-green-500 transition-all shadow-lg" title="Download Image">
+                            <button onclick="downloadImage('${img.url}', 'img_${index}')" class="bg-green-600 p-3 rounded-full hover:bg-green-500 transition-all shadow-lg" title="Download Image">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                             </button>
-                            <button onclick="copyToClipboard('${imgUrl}')" class="bg-gray-700 p-3 rounded-full hover:bg-gray-600 transition-all shadow-lg" title="Copy URL">
+                            <button onclick="copyToClipboard('${img.url}')" class="bg-gray-700 p-3 rounded-full hover:bg-gray-600 transition-all shadow-lg" title="Copy URL">
                                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
                             </button>
                         </div>
@@ -234,7 +285,7 @@
                 gallery.appendChild(item);
             });
             
-            showStatus(`Processing complete. Displayed ${images.length} items.`, "text-green-400");
+            showStatus(`Processing complete. Images sorted by ${document.getElementById('sortOrder').value}.`, "text-green-400");
         }
 
         async function downloadImage(url, filename) {
@@ -253,13 +304,6 @@
             }
         }
 
-        function handleImageError(img) {
-            const container = img.closest('.gallery-item');
-            if (container) container.remove();
-            const currentCount = document.querySelectorAll('.gallery-item').length;
-            document.getElementById('countLabel').textContent = `Extracted ${currentCount} Images`;
-        }
-
         function copyToClipboard(text) {
             const el = document.createElement('textarea');
             el.value = text;
@@ -275,7 +319,7 @@
         }
 
         function copyAllUrls() {
-            const urls = Array.from(document.querySelectorAll('.gallery-item img')).map(img => img.src);
+            const urls = currentImagesData.map(img => img.url);
             if (urls.length === 0) return;
             const text = urls.join('\n');
             const el = document.createElement('textarea');
