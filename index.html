@@ -38,7 +38,7 @@
         <header class="text-center mb-8">
             <h1 class="text-4xl font-bold mb-2 text-blue-400">Universal Image Extractor</h1>
             <p class="text-gray-400 max-w-2xl mx-auto text-lg">
-                A simple tool to instantly extract, upscale, and preview images from provided links or source code.
+                Extract and preview images from any source code or list of links. Supports JPG, PNG, WEBP, and more.
             </p>
         </header>
 
@@ -121,36 +121,41 @@
             if (input.includes('<')) {
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(input, 'text/html');
-                doc.querySelectorAll('[data-url], [data-src], .bbImage img, img').forEach(el => {
-                    const url = el.getAttribute('data-url') || el.getAttribute('src');
-                    if (url) imageSet.add(upscaleUrl(resolveUrl(url)));
+                doc.querySelectorAll('[data-url], [data-src], img').forEach(el => {
+                    const url = el.getAttribute('data-url') || el.getAttribute('data-src') || el.getAttribute('src');
+                    if (url) {
+                        const resolved = resolveUrl(url);
+                        if (resolved) imageSet.add(resolved);
+                    }
                 });
             }
 
             // 2. Greedy Regex Scan (Essential for mixed text or raw URL lists)
-            const regex = /(https?:\/\/[^"'\s]+\.(?:jpg|jpeg|png|webp|gif|avif)[^"'\s]*)/gi;
+            const regex = /(https?:\/\/[^"'\s]+\.(?:jpg|jpeg|png|webp|gif|avif|svg)[^"'\s]*)/gi;
             let match;
             while ((match = regex.exec(input)) !== null) {
                 const url = match[0].replace(/\\/g, '');
-                if (!url.includes('logo') && !url.includes('avatar') && !url.includes('icon')) {
-                    imageSet.add(upscaleUrl(resolveUrl(url)));
+                if (!isNoise(url)) {
+                    const resolved = resolveUrl(url);
+                    if (resolved) imageSet.add(resolved);
                 }
             }
 
-            const finalImages = Array.from(imageSet).filter(url => {
-                const low = url.toLowerCase();
-                return url && (low.includes('selti-delivery.ru') || low.includes('jpg6.su') || isDirectImage(url));
-            });
+            const finalImages = Array.from(imageSet).filter(url => isDirectImage(url));
 
             currentExtractedUrls = finalImages;
             renderGallery(finalImages);
         }
 
-        function upscaleUrl(url) {
-            if (url.includes('selti-delivery.ru')) {
-                return url.replace(/\.(md|th)\.(jpg|jpeg|png|webp)$/i, '.$2');
-            }
-            return url;
+        // Helper to filter out common UI noise
+        function isNoise(url) {
+            const low = url.toLowerCase();
+            return low.includes('logo') || 
+                   low.includes('avatar') || 
+                   low.includes('icon') || 
+                   low.includes('favicon') || 
+                   low.includes('/sprite') || 
+                   low.includes('tracking');
         }
 
         function isDirectImage(url) {
@@ -161,7 +166,13 @@
             if (!url) return "";
             url = url.trim().replace(/\\/g, ''); 
             if (url.startsWith('//')) return 'https:' + url;
-            return url;
+            // Check if it's a valid URL
+            try {
+                new URL(url);
+                return url;
+            } catch (e) {
+                return "";
+            }
         }
 
         function resetUI() {
@@ -185,12 +196,12 @@
 
             if (images.length === 0) {
                 document.getElementById('emptyState').classList.remove('hidden');
-                showStatus("No valid images detected. Make sure you are pasting direct image addresses or the page source.", "text-yellow-500");
+                showStatus("No valid images detected. Ensure the source contains image links (jpg, png, etc.) or page code.", "text-yellow-500");
                 return;
             }
 
             toolbar.classList.remove('hidden');
-            countLabel.textContent = `Extracted ${images.length} High-Resolution Images`;
+            countLabel.textContent = `Extracted ${images.length} Images`;
 
             images.forEach((imgUrl, index) => {
                 const item = document.createElement('div');
@@ -211,7 +222,7 @@
                             <a href="${imgUrl}" target="_blank" class="bg-blue-600 p-3 rounded-full hover:bg-blue-500 transition-all shadow-lg" title="Open Image">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                             </a>
-                            <button onclick="downloadImage('${imgUrl}', 'image_${index}')" class="bg-green-600 p-3 rounded-full hover:bg-green-500 transition-all shadow-lg" title="Download Image">
+                            <button onclick="downloadImage('${imgUrl}', 'extracted_image_${index}')" class="bg-green-600 p-3 rounded-full hover:bg-green-500 transition-all shadow-lg" title="Download Image">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                             </button>
                             <button onclick="copyToClipboard('${imgUrl}')" class="bg-gray-700 p-3 rounded-full hover:bg-gray-600 transition-all shadow-lg" title="Copy URL">
@@ -232,12 +243,12 @@
                 const blob = await response.blob();
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
-                link.download = filename + url.substring(url.lastIndexOf('.'));
+                const extension = url.split(/[?#]/)[0].split('.').pop() || 'jpg';
+                link.download = `${filename}.${extension}`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
             } catch (e) {
-                // Fallback if fetch is blocked by CORS
                 window.open(url, '_blank');
             }
         }
@@ -246,7 +257,7 @@
             const container = img.closest('.gallery-item');
             if (container) container.remove();
             const currentCount = document.querySelectorAll('.gallery-item').length;
-            document.getElementById('countLabel').textContent = `Extracted ${currentCount} High-Resolution Images`;
+            document.getElementById('countLabel').textContent = `Extracted ${currentCount} Images`;
         }
 
         function copyToClipboard(text) {
